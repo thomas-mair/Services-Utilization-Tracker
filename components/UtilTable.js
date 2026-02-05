@@ -1,7 +1,11 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-// Count weekdays in a month
+const MONTHS = [
+  "Jan","Feb","Mar","Apr","May","Jun",
+  "Jul","Aug","Sep","Oct","Nov","Dec",
+];
+
 function countWeekdays(year, month) {
   let d = new Date(year, month - 1, 1);
   let count = 0;
@@ -13,53 +17,22 @@ function countWeekdays(year, month) {
   return count;
 }
 
-function utilColor(util, target) {
-  if (util >= target) return "bg-green-200";
-  if (util >= target * 0.9) return "bg-yellow-200";
-  return "bg-red-200";
-}
+const utilColor = (util, target) => {
+  if (util >= target) return "bg-green-100";
+  if (util >= target * 0.9) return "bg-yellow-100";
+  return "bg-red-100";
+};
 
-export default function UtilTable({
-  year,
-  employees,
-  holidays,
-  onEdit,
-  onFilter,
-}) {
-  const months = [
-    "Jan","Feb","Mar","Apr","May","Jun",
-    "Jul","Aug","Sep","Oct","Nov","Dec",
-  ];
-
-  const [sort, setSort] = useState({ key: null, dir: null });
-
-  const sortedEmployees = useMemo(() => {
-    if (!sort.key || !sort.dir) return employees;
-    return [...employees].sort((a, b) => {
-      if (a[sort.key] < b[sort.key]) return sort.dir === "asc" ? -1 : 1;
-      if (a[sort.key] > b[sort.key]) return sort.dir === "asc" ? 1 : -1;
-      return 0;
-    });
-  }, [employees, sort]);
-
-  const toggleSort = (key) => {
-    setSort((s) => {
-      if (s.key !== key) return { key, dir: "asc" };
-      if (s.dir === "asc") return { key, dir: "desc" };
-      if (s.dir === "desc") return { key: null, dir: null };
-      return { key, dir: "asc" };
-    });
-  };
-
+export default function UtilTable({ year, employees, holidays, onEdit }) {
   const baseByMonth = useMemo(
     () =>
-      months.map((_, i) => (year ? countWeekdays(year, i + 1) * 8 : 0)),
+      MONTHS.map((_, i) => (year ? countWeekdays(year, i + 1) * 8 : 0)),
     [year]
   );
 
   const holidayByMonth = useMemo(
     () =>
-      months.map((_, i) =>
+      MONTHS.map((_, i) =>
         holidays
           .filter((h) => h.month === i + 1)
           .reduce((s, h) => s + Number(h.hours || 0), 0)
@@ -111,171 +84,129 @@ export default function UtilTable({
     };
   };
 
-  const utilPct = (actual, pto, net) =>
+  const utilPct = (actual, net) =>
     net > 0 ? Math.min(100, Math.round((actual / net) * 100)) : 0;
 
+  const teamAvg = useMemo(() => {
+    if (!employees.length) return 0;
+    let total = 0;
+    employees.forEach((e) => {
+      const t = calcTotals(e.employee_hours || []);
+      const net = netByMonth.reduce((a, b) => a + b, 0);
+      total += utilPct(t.ytd.actual, net);
+    });
+    return Math.round(total / employees.length);
+  }, [employees, netByMonth]);
+
   return (
-    <div className="overflow-x-auto border rounded-xl p-2">
+    <div className="overflow-x-auto">
       <table className="min-w-full border-collapse text-sm">
         <thead>
-          <tr className="bg-gray-100">
-            <th className="border p-2">✏️</th>
-            {["employee_name","product","manager","annual_target","hire_month"].map((k) => (
+          <tr className="bg-gray-200">
+            <th className="border p-2">Employee</th>
+            <th className="border p-2">Manager</th>
+            <th className="border p-2">Target</th>
+            <th className="border p-2">Hire</th>
+
+            {["Q1","Q2","Q3","Q4"].map((q, idx) => (
               <th
-                key={k}
-                className="border p-2 cursor-pointer"
-                onClick={() => toggleSort(k)}
+                key={q}
+                colSpan={3}
+                className="border bg-[#9b0f3a] text-white text-center"
               >
-                {k.replace("_"," ")}
+                {q}
               </th>
             ))}
-            {months.map((m) => (
+
+            <th className="border p-2">YTD</th>
+          </tr>
+
+          <tr className="bg-gray-100">
+            <th className="border p-2"></th>
+            <th className="border p-2"></th>
+            <th className="border p-2"></th>
+            <th className="border p-2"></th>
+
+            {MONTHS.map((m) => (
               <th key={m} className="border p-2 text-center">
                 {m}
                 <div className="text-xs text-gray-500">Actual | PTO</div>
               </th>
             ))}
-            <th className="border p-2">Q1</th>
-            <th className="border p-2">Q2</th>
-            <th className="border p-2">Q3</th>
-            <th className="border p-2">Q4</th>
-            <th className="border p-2">YTD</th>
+
+            <th className="border p-2 text-center">Util</th>
           </tr>
         </thead>
 
         <tbody>
+          {/* Base / Holiday / Net rows */}
           <tr className="bg-gray-50 font-semibold">
-            <td colSpan={5} className="border p-2">Base Hours</td>
+            <td colSpan={4} className="border p-2">Base Hours →</td>
             {baseByMonth.map((b,i)=>(<td key={i} className="border p-2 text-center">{b}</td>))}
-            <td colSpan={5}></td>
+            <td></td>
           </tr>
 
           <tr className="bg-gray-50 font-semibold">
-            <td colSpan={5} className="border p-2">Holidays</td>
+            <td colSpan={4} className="border p-2">Holidays →</td>
             {holidayByMonth.map((h,i)=>(<td key={i} className="border p-2 text-center">{h}</td>))}
-            <td colSpan={5}></td>
+            <td></td>
           </tr>
 
           <tr className="bg-gray-50 font-semibold">
-            <td colSpan={5} className="border p-2">Net Available</td>
+            <td colSpan={4} className="border p-2">Net Available →</td>
             {netByMonth.map((n,i)=>(<td key={i} className="border p-2 text-center">{n}</td>))}
-            <td colSpan={5}></td>
+            <td></td>
           </tr>
 
-          {sortedEmployees.map((e) => {
+          {employees.map((e) => {
             const totals = calcTotals(e.employee_hours || []);
+            const netTotal = netByMonth.reduce((a, b) => a + b, 0);
+            const ytdUtil = utilPct(totals.ytd.actual, netTotal);
 
             return (
               <tr key={e.id} className="hover:bg-gray-50">
-                <td className="border p-2 text-center">
-                  <button onClick={() => onEdit(e)}>✏️</button>
-                </td>
-
                 <td className="border p-2">{e.employee_name}</td>
-
-                <td
-                  className="border p-2 cursor-pointer text-blue-600"
-                  onClick={() => onFilter({ type: "product", value: e.product })}
-                >
-                  {e.product}
-                </td>
-
-                <td
-                  className="border p-2 cursor-pointer text-blue-600"
-                  onClick={() => onFilter({ type: "manager", value: e.manager })}
-                >
-                  {e.manager}
-                </td>
-
+                <td className="border p-2">{e.manager}</td>
                 <td className="border p-2 text-center">
-                  {e.target_mode === "previous"
-                    ? e.annual_target
-                    : `${e.q1_target}/${e.q2_target}/${e.q3_target}/${e.q4_target}`}
+                  {e.annual_target}
                 </td>
-
                 <td className="border p-2 text-center">{e.hire_month}</td>
 
-                {months.map((_, i) => {
-                  const net = netByMonth[i];
-                  const util = utilPct(totals.actual[i], totals.pto[i], net);
-                  const target =
-                    e.target_mode === "previous"
-                      ? e.annual_target
-                      : i < 3
-                      ? e.q1_target
-                      : i < 6
-                      ? e.q2_target
-                      : i < 9
-                      ? e.q3_target
-                      : e.q4_target;
+                {MONTHS.map((_, i) => (
+                  <td key={i} className="border p-1 text-center">
+                    <div className="flex gap-1 justify-center">
+                      <input
+                        className="w-[47%] text-center border rounded"
+                        value={totals.actual[i]}
+                        onChange={(ev) =>
+                          upsertHours(e.id, i + 1, "actual_hours", ev.target.value)
+                        }
+                      />
+                      <input
+                        className="w-[47%] text-center border rounded"
+                        value={totals.pto[i]}
+                        onChange={(ev) =>
+                          upsertHours(e.id, i + 1, "pto_hours", ev.target.value)
+                        }
+                      />
+                    </div>
+                  </td>
+                ))}
 
-                  return (
-                    <td
-                      key={i}
-                      className={`border p-1 text-center ${utilColor(
-                        util,
-                        target
-                      )}`}
-                    >
-                      <div className="flex gap-1 justify-center">
-                        <input
-                          className="w-[47%] text-center border rounded"
-                          value={totals.actual[i]}
-                          onChange={(ev) =>
-                            upsertHours(e.id, i + 1, "actual_hours", ev.target.value)
-                          }
-                        />
-                        <input
-                          className="w-[47%] text-center border rounded"
-                          value={totals.pto[i]}
-                          onChange={(ev) =>
-                            upsertHours(e.id, i + 1, "pto_hours", ev.target.value)
-                          }
-                        />
-                      </div>
-                      <div className="text-xs mt-1">{util}%</div>
-                    </td>
-                  );
-                })}
-
-                {[totals.q1, totals.q2, totals.q3, totals.q4, totals.ytd].map(
-                  (t, idx) => {
-                    const net = netByMonth
-                      .slice(idx * 3, idx * 3 + 3)
-                      .reduce((a, b) => a + b, 0);
-
-                    const target =
-                      e.target_mode === "previous"
-                        ? e.annual_target
-                        : idx === 0
-                        ? e.q1_target
-                        : idx === 1
-                        ? e.q2_target
-                        : idx === 2
-                        ? e.q3_target
-                        : e.q4_target;
-
-                    const util = utilPct(t.actual, t.pto, net);
-
-                    return (
-                      <td
-                        key={idx}
-                        className={`border p-2 text-center ${utilColor(
-                          util,
-                          target
-                        )}`}
-                      >
-                        <div>
-                          {t.actual} | {t.pto}
-                        </div>
-                        <div className="text-xs">{util}%</div>
-                      </td>
-                    );
-                  }
-                )}
+                <td className={`border p-2 text-center ${utilColor(ytdUtil, e.annual_target)}`}>
+                  {ytdUtil}%
+                </td>
               </tr>
             );
           })}
+
+          <tr className="bg-gray-100 font-semibold">
+            <td colSpan={4} className="border p-2">Team Average</td>
+            {Array(12).fill(null).map((_, i) => (
+              <td key={i} className="border p-2"></td>
+            ))}
+            <td className="border p-2 text-center">{teamAvg}%</td>
+          </tr>
         </tbody>
       </table>
     </div>
