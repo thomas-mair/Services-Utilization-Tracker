@@ -97,13 +97,18 @@ export default function UtilTable({
       pto: pto.slice(m, m + 3).reduce((a, b) => a + b, 0),
     });
 
-    const q1 = q(0), q2 = q(3), q3 = q(6), q4 = q(9);
-    const ytd = {
-      actual: actual.reduce((a, b) => a + b, 0),
-      pto: pto.reduce((a, b) => a + b, 0),
+    return {
+      actual,
+      pto,
+      q1: q(0),
+      q2: q(3),
+      q3: q(6),
+      q4: q(9),
+      ytd: {
+        actual: actual.reduce((a, b) => a + b, 0),
+        pto: pto.reduce((a, b) => a + b, 0),
+      },
     };
-
-    return { actual, pto, q1, q2, q3, q4, ytd };
   };
 
   const utilPct = (actual, pto, net) =>
@@ -139,7 +144,6 @@ export default function UtilTable({
         </thead>
 
         <tbody>
-          {/* SUMMARY ROWS */}
           <tr className="bg-gray-50 font-semibold">
             <td colSpan={5} className="border p-2">Base Hours</td>
             {baseByMonth.map((b,i)=>(<td key={i} className="border p-2 text-center">{b}</td>))}
@@ -158,13 +162,8 @@ export default function UtilTable({
             <td colSpan={5}></td>
           </tr>
 
-          {/* EMPLOYEE ROWS */}
           {sortedEmployees.map((e) => {
             const totals = calcTotals(e.employee_hours || []);
-            const target =
-              e.target_mode === "previous"
-                ? Number(e.annual_target || 0)
-                : null;
 
             return (
               <tr key={e.id} className="hover:bg-gray-50">
@@ -190,7 +189,7 @@ export default function UtilTable({
 
                 <td className="border p-2 text-center">
                   {e.target_mode === "previous"
-                    ? target
+                    ? e.annual_target
                     : `${e.q1_target}/${e.q2_target}/${e.q3_target}/${e.q4_target}`}
                 </td>
 
@@ -199,21 +198,25 @@ export default function UtilTable({
                 {months.map((_, i) => {
                   const net = netByMonth[i];
                   const util = utilPct(totals.actual[i], totals.pto[i], net);
-                  const cellClass = utilColor(
-                    util,
+                  const target =
                     e.target_mode === "previous"
-                      ? target
+                      ? e.annual_target
                       : i < 3
                       ? e.q1_target
                       : i < 6
                       ? e.q2_target
                       : i < 9
                       ? e.q3_target
-                      : e.q4_target
-                  );
+                      : e.q4_target;
 
                   return (
-                    <td key={i} className={`border p-1 text-center ${cellClass}`}>
+                    <td
+                      key={i}
+                      className={`border p-1 text-center ${utilColor(
+                        util,
+                        target
+                      )}`}
+                    >
                       <div className="flex gap-1 justify-center">
                         <input
                           className="w-[47%] text-center border rounded"
