@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import UtilTable from "@/components/UtilTable";
 import AddEmployeeModal from "@/components/AddEmployeeModal";
 import HolidaysModal from "@/components/HolidaysModal";
@@ -13,6 +14,9 @@ export default function Page() {
   const [editingEmp, setEditingEmp] = useState(null);
   const [showHolModal, setShowHolModal] = useState(false);
 
+  const [filter, setFilter] = useState({ type: null, value: null });
+
+  // Load year
   useEffect(() => {
     fetch("/api/year")
       .then((r) => r.json())
@@ -21,49 +25,83 @@ export default function Page() {
       });
   }, []);
 
+  // Load data when year is set
   useEffect(() => {
     if (!year) return;
-    fetch(`/api/employee?year_id=${year.id}`)
-      .then((r) => r.json())
-      .then(setEmployees);
 
-    fetch(`/api/holiday?year_id=${year.id}`)
-      .then((r) => r.json())
-      .then(setHolidays);
+    const load = async () => {
+      const emps = await fetch(`/api/employee?year_id=${year.id}`).then((r) =>
+        r.json()
+      );
+      const hols = await fetch(`/api/holiday?year_id=${year.id}`).then((r) =>
+        r.json()
+      );
+      setEmployees(emps);
+      setHolidays(hols);
+    };
+
+    load();
+
+    // ---------- REALTIME SUBSCRIPTIONS ----------
+    const empSub = supabase
+      .channel("employees")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employees" },
+        load
+      )
+      .subscribe();
+
+    const hrsSub = supabase
+      .channel("hours")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "employee_hours" },
+        load
+      )
+      .subscribe();
+
+    const holSub = supabase
+      .channel("holidays")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "holidays" },
+        load
+      )
+      .subscribe();
+
+    return () => {
+      empSub.unsubscribe();
+      hrsSub.unsubscribe();
+      holSub.unsubscribe();
+    };
   }, [year]);
+
+  const filteredEmployees = useMemo(() => {
+    if (!filter.type) return employees;
+    return employees.filter((e) => e[filter.type] === filter.value);
+  }, [employees, filter]);
 
   const saveEmployee = async (emp) => {
     const method = emp.id ? "PUT" : "POST";
-
-    const res = await fetch("/api/employee", {
+    await fetch("/api/employee", {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...emp, year_id: year.id }),
     });
-
-    const saved = await res.json();
     setShowEmpModal(false);
-
-    // refresh
-    const list = await fetch(`/api/employee?year_id=${year.id}`).then((r) =>
-      r.json()
-    );
-    setEmployees(list);
   };
 
   const addHoliday = async (h) => {
-    const res = await fetch("/api/holiday", {
+    await fetch("/api/holiday", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...h, year_id: year.id }),
     });
-    const saved = await res.json();
-    setHolidays([...holidays, saved]);
   };
 
   const deleteHoliday = async (id) => {
     await fetch(`/api/holiday?id=${id}`, { method: "DELETE" });
-    setHolidays(holidays.filter((h) => h.id !== id));
   };
 
   return (
@@ -90,15 +128,27 @@ export default function Page() {
           >
             Manage Holidays
           </button>
+
+          {filter.type && (
+            <button
+              className="bg-gray-200 px-4 py-2 rounded"
+              onClick={() => setFilter({ type: null, value: null })}
+            >
+              Back to all
+            </button>
+          )}
         </div>
       </div>
 
       <UtilTable
-        employees={employees}
+        year={year?.year}
+        employees={filteredEmployees}
+        holidays={holidays}
         onEdit={(e) => {
           setEditingEmp(e);
           setShowEmpModal(true);
         }}
+        onFilter={setFilter}
       />
 
       <AddEmployeeModal
