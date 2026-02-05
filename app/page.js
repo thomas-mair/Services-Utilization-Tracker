@@ -9,23 +9,32 @@ export default function Page() {
   const [year, setYear] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [holidays, setHolidays] = useState([]);
-
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [showHolModal, setShowHolModal] = useState(false);
-
   const [filter, setFilter] = useState({ type: null, value: null });
 
-  // Load year
+  // Ensure a year exists (bootstrap)
   useEffect(() => {
-    fetch("/api/year")
-      .then((r) => r.json())
-      .then((yrs) => {
-        if (yrs.length) setYear(yrs[0]);
-      });
+    const initYear = async () => {
+      const yrs = await fetch("/api/year").then((r) => r.json());
+
+      if (yrs.length === 0) {
+        const thisYear = new Date().getFullYear();
+        const created = await fetch("/api/year", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ year: thisYear }),
+        }).then((r) => r.json());
+        setYear(created);
+      } else {
+        setYear(yrs[0]);
+      }
+    };
+    initYear();
   }, []);
 
-  // Load data when year is set
+  // Load data + realtime subscriptions
   useEffect(() => {
     if (!year) return;
 
@@ -42,7 +51,6 @@ export default function Page() {
 
     load();
 
-    // ---------- REALTIME SUBSCRIPTIONS ----------
     const empSub = supabase
       .channel("employees")
       .on(
