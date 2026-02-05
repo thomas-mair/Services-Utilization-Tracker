@@ -12,19 +12,16 @@ export default function Page() {
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmp, setEditingEmp] = useState(null);
   const [showHolModal, setShowHolModal] = useState(false);
-  const [filter, setFilter] = useState({ type: null, value: null });
 
-  // Ensure a year exists (bootstrap)
+  // Bootstrap year if none exists
   useEffect(() => {
     const initYear = async () => {
       const yrs = await fetch("/api/year").then((r) => r.json());
-
       if (yrs.length === 0) {
-        const thisYear = new Date().getFullYear();
         const created = await fetch("/api/year", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ year: thisYear }),
+          body: JSON.stringify({ year: new Date().getFullYear() }),
         }).then((r) => r.json());
         setYear(created);
       } else {
@@ -34,7 +31,7 @@ export default function Page() {
     initYear();
   }, []);
 
-  // Load data + realtime subscriptions
+  // Load data + realtime
   useEffect(() => {
     if (!year) return;
 
@@ -85,11 +82,6 @@ export default function Page() {
     };
   }, [year]);
 
-  const filteredEmployees = useMemo(() => {
-    if (!filter.type) return employees;
-    return employees.filter((e) => e[filter.type] === filter.value);
-  }, [employees, filter]);
-
   const saveEmployee = async (emp) => {
     const method = emp.id ? "PUT" : "POST";
     await fetch("/api/employee", {
@@ -113,15 +105,22 @@ export default function Page() {
   };
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex justify-between items-center">
+    <div className="min-h-screen bg-gray-100">
+      {/* Top banner */}
+      <div className="bg-[#9b0f3a] text-white px-8 py-6">
         <h1 className="text-2xl font-bold">
-          Utilization Tracker — {year?.year}
+          Professional Services Utilization Tracker
         </h1>
+        <p className="text-sm opacity-90">
+          Track billable hours, PTO, and utilization across your team
+        </p>
+      </div>
 
-        <div className="space-x-2">
+      <div className="p-6 space-y-4">
+        {/* Controls */}
+        <div className="flex gap-2">
           <button
-            className="bg-green-600 text-white px-4 py-2 rounded"
+            className="bg-[#9b0f3a] text-white px-4 py-2 rounded"
             onClick={() => {
               setEditingEmp(null);
               setShowEmpModal(true);
@@ -131,33 +130,25 @@ export default function Page() {
           </button>
 
           <button
-            className="bg-purple-600 text-white px-4 py-2 rounded"
+            className="bg-gray-700 text-white px-4 py-2 rounded"
             onClick={() => setShowHolModal(true)}
           >
-            Manage Holidays
+            Holidays ({holidays.length})
           </button>
+        </div>
 
-          {filter.type && (
-            <button
-              className="bg-gray-200 px-4 py-2 rounded"
-              onClick={() => setFilter({ type: null, value: null })}
-            >
-              Back to all
-            </button>
-          )}
+        <div className="bg-white rounded-xl shadow p-4">
+          <UtilTable
+            year={year?.year}
+            employees={employees}
+            holidays={holidays}
+            onEdit={(e) => {
+              setEditingEmp(e);
+              setShowEmpModal(true);
+            }}
+          />
         </div>
       </div>
-
-      <UtilTable
-        year={year?.year}
-        employees={filteredEmployees}
-        holidays={holidays}
-        onEdit={(e) => {
-          setEditingEmp(e);
-          setShowEmpModal(true);
-        }}
-        onFilter={setFilter}
-      />
 
       <AddEmployeeModal
         isOpen={showEmpModal}
