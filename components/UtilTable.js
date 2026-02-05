@@ -5,37 +5,46 @@ const MONTHS = [
   "Jan","Feb","Mar","Apr","May","Jun",
   "Jul","Aug","Sep","Oct","Nov","Dec",
 ];
+const QUARTERS = { Q1: [0,1,2], Q2: [3,4,5], Q3: [6,7,8], Q4: [9,10,11] };
 
+// Weekdays * 8 hours
 function countWeekdays(year, month) {
-  let d = new Date(year, month - 1, 1);
+  let d = new Date(year, month, 1);
   let count = 0;
-  while (d.getMonth() === month - 1) {
+  while (d.getMonth() === month) {
     const day = d.getDay();
     if (day !== 0 && day !== 6) count++;
     d.setDate(d.getDate() + 1);
   }
-  return count;
+  return count * 8;
 }
 
 const utilColor = (util, target) => {
-  if (util >= target) return "bg-green-100";
-  if (util >= target * 0.9) return "bg-yellow-100";
-  return "bg-red-100";
+  if (util === 0) return "bg-[#e9ecef] text-[#495057]";
+  if (util >= target) return "bg-[#d4edda] text-[#155724]";
+  if (util >= target - 5) return "bg-[#fff3cd] text-[#856404]";
+  return "bg-[#f8d7da] text-[#721c24]";
 };
 
-export default function UtilTable({ year, employees, holidays, onEdit }) {
+export default function UtilTable({
+  year,
+  employees,
+  holidays,
+  locked = false,
+  onEdit,
+}) {
   const baseByMonth = useMemo(
-    () =>
-      MONTHS.map((_, i) => (year ? countWeekdays(year, i + 1) * 8 : 0)),
+    () => MONTHS.map((_, i) => (year ? countWeekdays(year, i) : 0)),
     [year]
   );
 
   const holidayByMonth = useMemo(
     () =>
-      MONTHS.map((_, i) =>
-        holidays
-          .filter((h) => h.month === i + 1)
-          .reduce((s, h) => s + Number(h.hours || 0), 0)
+      MONTHS.map(
+        (_, i) =>
+          holidays.filter(
+            (h) => new Date(h.date + "T00:00:00").getMonth() === i
+          ).length * 8
       ),
     [holidays]
   );
@@ -44,13 +53,15 @@ export default function UtilTable({ year, employees, holidays, onEdit }) {
     (b, i) => b - (holidayByMonth[i] || 0)
   );
 
-  const upsertHours = async (employee_id, month, field, value) => {
+  const upsertHours = async (employee_id, monthIdx, field, value) => {
+    if (locked) return; // HARD LOCK
+
     await fetch("/api/hours", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         employee_id,
-        month,
+        month: monthIdx + 1,
         [field]: Number(value || 0),
       }),
     });
@@ -65,147 +76,331 @@ export default function UtilTable({ year, employees, holidays, onEdit }) {
       pto[h.month - 1] = Number(h.pto_hours || 0);
     });
 
-    const q = (m) => ({
-      actual: actual.slice(m, m + 3).reduce((a, b) => a + b, 0),
-      pto: pto.slice(m, m + 3).reduce((a, b) => a + b, 0),
+    const quarter = (q) => {
+      const months = QUARTERS[q];
+      return {
+        actual: months.reduce((s, m) => s + actual[m], 0),
+        pto: months.reduce((s, m) => s + pto[m], 0),
+        net: months.reduce((s, m) => s + netByMonth[m], 0),
+      };
+    };
+
+    const q1 = quarter("Q1");
+    const q2 = quarter("Q2");
+    const q3 = quarter("Q3");
+    const q4 = quarter("Q4");
+
+    const ytdNet = netByMonth.reduce((a, b) => a + b, 0);
+    const ytdActual = actual.reduce((a, b) => a + b, 0);
+    const ytdPto = pto.reduce((a, b) => a + b, 0);
+
+    return { actual, pto, q1, q2, q3, q4, ytdActual, ytdPto, ytdNet };
+  };
+
+  const utilPct = (actual, net, pto = 0) =>
+    net - pto > 0 ? Math.min(100, (actual / (net - pto)) * 100) : 0;
+
+  const teamAverages = useMemo(() => {
+    if (!employees.length) return { q: [0, 0, 0, 0], ytd: 0 };
+
+    const qSums = [0, 0, 0, 0];
+    let ytdSum = 0;
+
+    employees.forEach((e) => {
+      const t = calcTotals(e.employee_hours || []);
+      const qs = [t.q1, t.q2, t.q3, t.q4];
+      qs.forEach((q, i) => {
+        qSums[i] += utilPct(q.actual, q.net, q.pto);
+      });
+      ytdSum += utilPct(t.ytdActual, t.ytdNet, t.ytdPto);
     });
 
     return {
-      actual,
-      pto,
-      q1: q(0),
-      q2: q(3),
-      q3: q(6),
-      q4: q(9),
-      ytd: {
-        actual: actual.reduce((a, b) => a + b, 0),
-        pto: pto.reduce((a, b) => a + b, 0),
-      },
+      q: qSums.map((s) => s / employees.length),
+      ytd: ytdSum / employees.length,
     };
-  };
-
-  const utilPct = (actual, net) =>
-    net > 0 ? Math.min(100, Math.round((actual / net) * 100)) : 0;
-
-  const teamAvg = useMemo(() => {
-    if (!employees.length) return 0;
-    let total = 0;
-    employees.forEach((e) => {
-      const t = calcTotals(e.employee_hours || []);
-      const net = netByMonth.reduce((a, b) => a + b, 0);
-      total += utilPct(t.ytd.actual, net);
-    });
-    return Math.round(total / employees.length);
   }, [employees, netByMonth]);
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full border-collapse text-sm">
+      <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="bg-gray-200">
-            <th className="border p-2">Employee</th>
-            <th className="border p-2">Manager</th>
-            <th className="border p-2">Target</th>
-            <th className="border p-2">Hire</th>
+          <tr>
+            <th
+              rowSpan={2}
+              className="sticky left-0 bg-[#f8f9fa] z-20 w-[150px] border"
+            >
+              Employee
+            </th>
+            <th
+              rowSpan={2}
+              className="sticky left-[150px] bg-[#f8f9fa] z-20 w-[150px] border"
+            >
+              Manager
+            </th>
+            <th
+              rowSpan={2}
+              className="sticky left-[300px] bg-[#f8f9fa] z-20 w-[100px] border"
+            >
+              Target
+            </th>
+            <th
+              rowSpan={2}
+              className="sticky left-[400px] bg-[#f8f9fa] z-20 w-[150px] border"
+            >
+              Hire
+            </th>
 
-            {["Q1","Q2","Q3","Q4"].map((q, idx) => (
-              <th
-                key={q}
-                colSpan={3}
-                className="border bg-[#9b0f3a] text-white text-center"
-              >
-                {q}
-              </th>
-            ))}
-
-            <th className="border p-2">YTD</th>
+            {MONTHS.map((m, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              return (
+                <>
+                  <th
+                    key={m}
+                    colSpan={2}
+                    className="bg-[#e9ecef] text-center text-xs border"
+                  >
+                    {m}
+                  </th>
+                  {isQE && (
+                    <th className="bg-[#8E1537] text-white text-center font-bold border">
+                      Q{Math.floor(i / 3) + 1}
+                    </th>
+                  )}
+                </>
+              );
+            })}
+            <th
+              rowSpan={2}
+              className="bg-[#8E1537] text-white border text-center"
+            >
+              YTD
+            </th>
           </tr>
 
-          <tr className="bg-gray-100">
-            <th className="border p-2"></th>
-            <th className="border p-2"></th>
-            <th className="border p-2"></th>
-            <th className="border p-2"></th>
+          <tr>
+            {MONTHS.map((_, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              return (
+                <>
+                  <th
+                    key={`a-${i}`}
+                    className="bg-[#e9ecef] text-center text-xs border"
+                  >
+                    Actual
+                  </th>
+                  <th
+                    key={`p-${i}`}
+                    className="bg-[#e9ecef] text-center text-xs border"
+                  >
+                    PTO
+                  </th>
+                  {isQE && (
+                    <th className="bg-[#8E1537] text-white text-center text-xs border">
+                      Util
+                    </th>
+                  )}
+                </>
+              );
+            })}
+          </tr>
 
-            {MONTHS.map((m) => (
-              <th key={m} className="border p-2 text-center">
-                {m}
-                <div className="text-xs text-gray-500">Actual | PTO</div>
-              </th>
-            ))}
+          {/* Base / Holidays / Net rows */}
+          <tr className="bg-[#f1f3f5] font-bold">
+            <th colSpan={4}>Base Hours →</th>
+            {MONTHS.map((_, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              const qTotal = isQE
+                ? QUARTERS[`Q${Math.floor(i / 3) + 1}`].reduce(
+                    (s, m) => s + baseByMonth[m],
+                    0
+                  )
+                : null;
+              return (
+                <>
+                  <th key={`b-${i}`} colSpan={2} className="text-center">
+                    {baseByMonth[i]}
+                  </th>
+                  {isQE && <th className="text-center">{qTotal}</th>}
+                </>
+              );
+            })}
+            <th></th>
+          </tr>
 
-            <th className="border p-2 text-center">Util</th>
+          <tr className="bg-[#f1f3f5] font-bold text-red-600">
+            <th colSpan={4}>Holidays →</th>
+            {MONTHS.map((_, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              const qTotal = isQE
+                ? QUARTERS[`Q${Math.floor(i / 3) + 1}`].reduce(
+                    (s, m) => s + holidayByMonth[m],
+                    0
+                  )
+                : null;
+              return (
+                <>
+                  <th key={`h-${i}`} colSpan={2} className="text-center">
+                    -{holidayByMonth[i]}
+                  </th>
+                  {isQE && <th className="text-center">-{qTotal}</th>}
+                </>
+              );
+            })}
+            <th></th>
+          </tr>
+
+          <tr className="bg-[#f1f3f5] font-bold text-blue-600">
+            <th colSpan={4}>Net Available →</th>
+            {MONTHS.map((_, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              const qTotal = isQE
+                ? QUARTERS[`Q${Math.floor(i / 3) + 1}`].reduce(
+                    (s, m) => s + netByMonth[m],
+                    0
+                  )
+                : null;
+              return (
+                <>
+                  <th key={`n-${i}`} colSpan={2} className="text-center">
+                    {netByMonth[i]}
+                  </th>
+                  {isQE && <th className="text-center">{qTotal}</th>}
+                </>
+              );
+            })}
+            <th></th>
           </tr>
         </thead>
 
         <tbody>
-          {/* Base / Holiday / Net rows */}
-          <tr className="bg-gray-50 font-semibold">
-            <td colSpan={4} className="border p-2">Base Hours →</td>
-            {baseByMonth.map((b,i)=>(<td key={i} className="border p-2 text-center">{b}</td>))}
-            <td></td>
-          </tr>
-
-          <tr className="bg-gray-50 font-semibold">
-            <td colSpan={4} className="border p-2">Holidays →</td>
-            {holidayByMonth.map((h,i)=>(<td key={i} className="border p-2 text-center">{h}</td>))}
-            <td></td>
-          </tr>
-
-          <tr className="bg-gray-50 font-semibold">
-            <td colSpan={4} className="border p-2">Net Available →</td>
-            {netByMonth.map((n,i)=>(<td key={i} className="border p-2 text-center">{n}</td>))}
-            <td></td>
-          </tr>
-
           {employees.map((e) => {
-            const totals = calcTotals(e.employee_hours || []);
-            const netTotal = netByMonth.reduce((a, b) => a + b, 0);
-            const ytdUtil = utilPct(totals.ytd.actual, netTotal);
+            const t = calcTotals(e.employee_hours || []);
+            const qs = [t.q1, t.q2, t.q3, t.q4];
 
             return (
               <tr key={e.id} className="hover:bg-gray-50">
-                <td className="border p-2">{e.employee_name}</td>
-                <td className="border p-2">{e.manager}</td>
-                <td className="border p-2 text-center">
-                  {e.annual_target}
+                <td className="sticky left-0 bg-white border px-2">
+                  <button
+                    onClick={() => !locked && onEdit(e)}
+                    className={`mr-1 ${
+                      locked ? "opacity-30 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    ✏️
+                  </button>
+                  <strong>{e.employee_name}</strong>
                 </td>
-                <td className="border p-2 text-center">{e.hire_month}</td>
+                <td className="sticky left-[150px] bg-white border px-2">
+                  {e.manager}
+                </td>
+                <td className="sticky left-[300px] bg-white border text-center">
+                  {e.annual_target}%
+                </td>
+                <td className="sticky left-[400px] bg-white border text-center">
+                  {e.hire_month}
+                </td>
 
-                {MONTHS.map((_, i) => (
-                  <td key={i} className="border p-1 text-center">
-                    <div className="flex gap-1 justify-center">
-                      <input
-                        className="w-[47%] text-center border rounded"
-                        value={totals.actual[i]}
-                        onChange={(ev) =>
-                          upsertHours(e.id, i + 1, "actual_hours", ev.target.value)
-                        }
-                      />
-                      <input
-                        className="w-[47%] text-center border rounded"
-                        value={totals.pto[i]}
-                        onChange={(ev) =>
-                          upsertHours(e.id, i + 1, "pto_hours", ev.target.value)
-                        }
-                      />
-                    </div>
-                  </td>
-                ))}
+                {MONTHS.map((_, i) => {
+                  const isQE = (i + 1) % 3 === 0;
+                  const qIdx = Math.floor(i / 3);
+                  const util =
+                    isQE &&
+                    utilPct(
+                      qs[qIdx].actual,
+                      qs[qIdx].net,
+                      qs[qIdx].pto
+                    );
 
-                <td className={`border p-2 text-center ${utilColor(ytdUtil, e.annual_target)}`}>
-                  {ytdUtil}%
+                  return (
+                    <>
+                      <td key={`a-${i}`} className="border text-center">
+                        <input
+                          className={`w-[70px] text-center border rounded ${
+                            locked ? "bg-gray-100 cursor-not-allowed" : ""
+                          }`}
+                          value={t.actual[i]}
+                          onChange={(ev) =>
+                            upsertHours(
+                              e.id,
+                              i,
+                              "actual_hours",
+                              ev.target.value
+                            )
+                          }
+                          disabled={locked}
+                        />
+                      </td>
+                      <td key={`p-${i}`} className="border text-center">
+                        <input
+                          className={`w-[70px] text-center border rounded ${
+                            locked ? "bg-gray-100 cursor-not-allowed" : ""
+                          }`}
+                          value={t.pto[i]}
+                          onChange={(ev) =>
+                            upsertHours(
+                              e.id,
+                              i,
+                              "pto_hours",
+                              ev.target.value
+                            )
+                          }
+                          disabled={locked}
+                        />
+                      </td>
+                      {isQE && (
+                        <td
+                          className={`border text-center font-semibold ${utilColor(
+                            util,
+                            e.annual_target
+                          )}`}
+                        >
+                          {util.toFixed(2)}%
+                        </td>
+                      )}
+                    </>
+                  );
+                })}
+
+                <td
+                  className={`border text-center font-semibold ${utilColor(
+                    utilPct(t.ytdActual, t.ytdNet, t.ytdPto),
+                    e.annual_target
+                  )}`}
+                >
+                  {utilPct(
+                    t.ytdActual,
+                    t.ytdNet,
+                    t.ytdPto
+                  ).toFixed(2)}
+                  %
                 </td>
               </tr>
             );
           })}
 
-          <tr className="bg-gray-100 font-semibold">
-            <td colSpan={4} className="border p-2">Team Average</td>
-            {Array(12).fill(null).map((_, i) => (
-              <td key={i} className="border p-2"></td>
-            ))}
-            <td className="border p-2 text-center">{teamAvg}%</td>
+          {/* Team Average Row */}
+          <tr className="bg-[#f1f3f5] font-bold">
+            <td colSpan={4} className="border px-2">
+              Team Average
+            </td>
+            {MONTHS.map((_, i) => {
+              const isQE = (i + 1) % 3 === 0;
+              const qIdx = Math.floor(i / 3);
+              return (
+                <>
+                  <td key={`ta-${i}`} colSpan={2} className="border"></td>
+                  {isQE && (
+                    <td className="border text-center">
+                      {teamAverages.q[qIdx].toFixed(2)}%
+                    </td>
+                  )}
+                </>
+              );
+            })}
+            <td className="border text-center">
+              {teamAverages.ytd.toFixed(2)}%
+            </td>
           </tr>
         </tbody>
       </table>
