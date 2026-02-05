@@ -1,5 +1,6 @@
 // vercel.js
-module.exports = {
+
+export default {
   github: {
     enabled: false,
   },
